@@ -1,0 +1,363 @@
+#include <WiFi.h>
+#include <Wire.h>
+#include <DHT.h>
+#include <Adafruit_BMP085.h>
+
+// =====================================================
+// Wi-Fi Configuration
+// =====================================================
+const char* ssid = "YOUR_WIFI_NAME";
+const char* password = "YOUR_WIFI_PASSWORD";
+
+// =====================================================
+// DHT11 Configuration
+// =====================================================
+#define DHT_PIN 4
+#define DHT_TYPE DHT11
+
+DHT dht(DHT_PIN, DHT_TYPE);
+
+// =====================================================
+// Sensor Pins
+// =====================================================
+#define MQ_PIN 34
+#define RAIN_PIN 35
+
+// =====================================================
+// BMP180
+// SDA -> GPIO 21
+// SCL -> GPIO 22
+// =====================================================
+Adafruit_BMP085 bmp;
+
+// =====================================================
+// Web Server
+// =====================================================
+WiFiServer server(80);
+
+
+// =====================================================
+// SETUP
+// =====================================================
+void setup() {
+
+  Serial.begin(115200);
+
+  // Start DHT11
+  dht.begin();
+
+  // Start I2C
+  Wire.begin(21, 22);
+
+  // Start BMP180
+  if (bmp.begin()) {
+    Serial.println("BMP180 detected!");
+  } 
+  else {
+    Serial.println("BMP180 NOT detected!");
+  }
+
+  // ESP32 ADC resolution
+  analogReadResolution(12);
+
+  // Connect to Wi-Fi
+  WiFi.begin(ssid, password);
+
+  Serial.print("Connecting to Wi-Fi");
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println();
+  Serial.println("Wi-Fi Connected!");
+
+  Serial.print("ESP32 IP Address: ");
+  Serial.println(WiFi.localIP());
+
+  // Start web server
+  server.begin();
+}
+
+
+// =====================================================
+// LOOP
+// =====================================================
+void loop() {
+
+  WiFiClient client = server.available();
+
+  if (!client) {
+    return;
+  }
+
+  // Wait for browser request
+  while (!client.available()) {
+    delay(1);
+  }
+
+  client.readStringUntil('\r');
+  client.flush();
+
+
+  // ===================================================
+  // READ DHT11
+  // ===================================================
+
+  float temperature = dht.readTemperature();
+  float humidity = dht.readHumidity();
+
+
+  // ===================================================
+  // READ BMP180
+  // ===================================================
+
+  float pressure = bmp.readPressure() / 100.0;
+
+
+  // ===================================================
+  // READ MQ SENSOR
+  // ===================================================
+
+  int mqValue = analogRead(MQ_PIN);
+
+
+  // ===================================================
+  // READ RAIN SENSOR
+  // ===================================================
+
+  int rainValue = analogRead(RAIN_PIN);
+
+  String rainStatus;
+
+  if (rainValue < 1500) {
+    rainStatus = "RAIN";
+  }
+  else if (rainValue < 3000) {
+    rainStatus = "MOIST";
+  }
+  else {
+    rainStatus = "NO RAIN";
+  }
+
+
+  // ===================================================
+  // SEND WEB PAGE
+  // ===================================================
+
+  client.println("HTTP/1.1 200 OK");
+  client.println("Content-Type: text/html");
+  client.println("Connection: close");
+  client.println();
+
+
+  client.println("<!DOCTYPE html>");
+  client.println("<html>");
+
+  client.println("<head>");
+
+  client.println(
+    "<meta name='viewport' "
+    "content='width=device-width, initial-scale=1'>"
+  );
+
+  // Refresh every 5 seconds
+  client.println(
+    "<meta http-equiv='refresh' content='5'>"
+  );
+
+  client.println("<title>ESP32 Weather Station</title>");
+
+
+  // ===================================================
+  // CSS
+  // ===================================================
+
+  client.println("<style>");
+
+  client.println(
+    "body{"
+    "font-family:Arial;"
+    "background:#eef2f3;"
+    "text-align:center;"
+    "margin:0;"
+    "padding:20px;"
+    "}"
+  );
+
+  client.println(
+    ".container{"
+    "max-width:600px;"
+    "margin:auto;"
+    "}"
+  );
+
+  client.println(
+    ".card{"
+    "background:white;"
+    "margin:15px 0;"
+    "padding:20px;"
+    "border-radius:15px;"
+    "box-shadow:0 3px 10px rgba(0,0,0,0.15);"
+    "}"
+  );
+
+  client.println(
+    ".value{"
+    "font-size:28px;"
+    "font-weight:bold;"
+    "}"
+  );
+
+  client.println(
+    ".title{"
+    "font-size:32px;"
+    "font-weight:bold;"
+    "}"
+  );
+
+  client.println("</style>");
+
+  client.println("</head>");
+
+
+  // ===================================================
+  // BODY
+  // ===================================================
+
+  client.println("<body>");
+
+  client.println("<div class='container'>");
+
+  client.println(
+    "<div class='title'>ESP32 Smart Weather Station</div>"
+  );
+
+
+  // ===================================================
+  // TEMPERATURE
+  // ===================================================
+
+  client.println("<div class='card'>");
+
+  client.println("<h2>Temperature</h2>");
+
+  client.print("<div class='value'>");
+
+  if (isnan(temperature)) {
+    client.print("Sensor Error");
+  }
+  else {
+    client.print(temperature);
+    client.print(" &deg;C");
+  }
+
+  client.println("</div>");
+
+  client.println("</div>");
+
+
+  // ===================================================
+  // HUMIDITY
+  // ===================================================
+
+  client.println("<div class='card'>");
+
+  client.println("<h2>Humidity</h2>");
+
+  client.print("<div class='value'>");
+
+  if (isnan(humidity)) {
+    client.print("Sensor Error");
+  }
+  else {
+    client.print(humidity);
+    client.print(" %");
+  }
+
+  client.println("</div>");
+
+  client.println("</div>");
+
+
+  // ===================================================
+  // PRESSURE
+  // ===================================================
+
+  client.println("<div class='card'>");
+
+  client.println("<h2>Atmospheric Pressure</h2>");
+
+  client.print("<div class='value'>");
+
+  client.print(pressure);
+
+  client.println(" hPa");
+
+  client.println("</div>");
+
+  client.println("</div>");
+
+
+  // ===================================================
+  // MQ SENSOR
+  // ===================================================
+
+  client.println("<div class='card'>");
+
+  client.println("<h2>Air Quality Sensor</h2>");
+
+  client.print("<div class='value'>");
+
+  client.print(mqValue);
+
+  client.println("</div>");
+
+  client.println("<p>Raw ADC Value</p>");
+
+  client.println("</div>");
+
+
+  // ===================================================
+  // RAIN SENSOR
+  // ===================================================
+
+  client.println("<div class='card'>");
+
+  client.println("<h2>Rain Sensor</h2>");
+
+  client.print("<div class='value'>");
+
+  client.print(rainStatus);
+
+  client.println("</div>");
+
+  client.print("<p>Sensor Value: ");
+
+  client.print(rainValue);
+
+  client.println("</p>");
+
+  client.println("</div>");
+
+
+  // ===================================================
+  // FOOTER
+  // ===================================================
+
+  client.println(
+    "<p>ESP32 IoT Environmental Monitoring System</p>"
+  );
+
+  client.println("</div>");
+
+  client.println("</body>");
+
+  client.println("</html>");
+
+
+  delay(1);
+
+  client.stop();
+}
